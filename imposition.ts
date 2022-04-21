@@ -26,7 +26,13 @@ const outputFile = args.o && args.o !== "" ? args.o : "finished-document.pdf";
 
 // Load the PDF using the commandline argument
 const uint8Array = Deno.readFileSync(args.i);
-const pdfDoc = await PDFDocument.load(uint8Array);
+const pdfDoc = await PDFDocument.load(uint8Array).catch((error) => {
+  console.error(
+    "There was a problem reading the provided filename. Please check to make sure the file exists in the location specified and that it is a valid PDF. See error below for more details"
+  );
+  console.error(error);
+  Deno.exit(0);
+});
 
 // Create document that will contain impositioned pages
 const processedDoc = await PDFDocument.create();
@@ -35,13 +41,23 @@ const processedDoc = await PDFDocument.create();
 const pagesPerSignature = args.p * 4;
 let totalPages = pdfDoc.getPageCount();
 
+// Check to make sure the document has the minimum number of pages
+if (totalPages < 4 && !args.f) {
+  console.error(
+    "The document contains too few pages to do an imposition. The document should contain at least 4 pages to create a single signature. If you would like to override this check, use the -f switch to force the script to add enough blank pages to reach 4."
+  );
+  Deno.exit(0);
+}
+
 // Make PDF total page count even for signatures by adding needed blank pages at end of document
 if (totalPages % pagesPerSignature !== 0) {
   const extraPages = pagesPerSignature - (totalPages % pagesPerSignature);
+  const samplePage = pdfDoc.getPage(0);
+  const { width, height } = samplePage.getSize();
   for (let i = 1; i <= extraPages; i++) {
-    pdfDoc.addPage(); // TODO: Make added pages match size of current pages
+    pdfDoc.addPage([width, height]);
   }
-  //Update totalPages with new page count after blank page insert
+  // Update totalPages with new page count after blank page insert
   totalPages = pdfDoc.getPageCount();
 }
 
@@ -73,6 +89,7 @@ async function getImpositionArray(index: number): Promise<number[]> {
   let toggle = false;
 
   for (let i = 0; i < pagesPerSignature / 2; i++) {
+    // TODO: Refactor this if/else? So far, everything I've come up with as an alternative is less clear and readable than this.
     if (toggle) {
       arr.push((index - 1) * pagesPerSignature + i);
       arr.push(index * pagesPerSignature - i - 1);
@@ -103,12 +120,3 @@ async function savePDF() {
 
   console.log("PDF file written to output/" + outputFile);
 }
-
-// The repo contains a number of test PDFs that you can run the script on in order to see that it is functioning correctly. Each contains a different number of pages for testing various scenarios. See the arguments below on how to run this script on these test files. The resulting PDF will appear in the "output" folder in the repo
-
-// To run from the cmd:
-// deno run --allow-write --allow-read imposition.ts -i ./test/test-12.pdf -o test-12-output.pdf -p 3
-// or
-// deno run --allow-write --allow-read imposition.ts -i ./test/test-60.pdf -o test-60-output.pdf -p 3
-// or
-// deno run --allow-write --allow-read imposition.ts -i ./test/test-103.pdf -o test-103-output.pdf -p 3
