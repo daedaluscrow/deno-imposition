@@ -1,7 +1,4 @@
-import {
-  PDFDocument,
-  PDFPage,
-} from "https://cdn.skypack.dev/pdf-lib@^1.11.1?dts";
+import { PDFDocument } from "https://cdn.skypack.dev/pdf-lib@^1.11.1?dts";
 import { parse } from "https://deno.land/std@0.134.0/flags/mod.ts";
 
 const args = parse(Deno.args);
@@ -27,101 +24,74 @@ const outputFile = args.o && args.o !== "" ? args.o : "finished-document.pdf";
 const uint8Array = Deno.readFileSync(args.i);
 const pdfDoc = await PDFDocument.load(uint8Array);
 
-// Make total page count even by adding a blank page at the end if it is odd
-if (pdfDoc.getPageCount() % 2 !== 0) pdfDoc.addPage();
-
 // Get array of all pages in document and set page constants
-const pages = pdfDoc.getPages();
+// const pages = pdfDoc.getPages();
 const pagesPerSignature = args.p * 4;
-const totalPages = pages.length;
+let totalPages = pdfDoc.getPageCount();
 
-const processedDoc = await breakIntoSignatures(
-  pages,
-  pagesPerSignature,
-  totalPages
-);
+// Make PDF total page count even for signatures by adding needed blank pages at end of document
+if (totalPages % pagesPerSignature !== 0) {
+  const extraPages = pagesPerSignature - (totalPages % pagesPerSignature);
+  for (let i = 1; i <= extraPages; i++) {
+    pdfDoc.addPage();
+  }
+}
+
+totalPages = pdfDoc.getPageCount();
+// console.log(totalPages);
+const numberOfSignatures = totalPages / pagesPerSignature;
+const pageIndex = [...Array(totalPages).keys()];
+const arrayOfSignatures: number[][] = [];
+
+for (let i = 0; i < numberOfSignatures; i++) {
+  arrayOfSignatures.push([]);
+}
+
+let processedDoc: PDFDocument;
+
+const arrayOfIndexes = arrayOfSignatures.map(async (signature, index) => {
+  const imposition = await getImpositionArray(index + 1);
+  signature = [...signature, ...imposition];
+  return await signature;
+});
+
+Promise.all(arrayOfIndexes).then((arr) => {
+  console.log(arr.flat());
+  impositionPages(pdfDoc, arr.flat());
+});
 
 // Save the PDFDocument and write it to a file
-const pdfBytes = await processedDoc.save();
-await Deno.writeFile("./output/" + outputFile, pdfBytes);
+// const pdfBytes = await processedDoc.save();
+// await Deno.writeFile("./output/" + outputFile, pdfBytes);
 
 // Log out successful write operation
 console.log("PDF file written to output/" + outputFile);
 
-async function breakIntoSignatures(
-  pages: Array<PDFPage>,
-  pagesPerSignature: number,
-  totalPages: number
-): Promise<PDFDocument> {
-  const totalSignatures = Math.ceil(totalPages / pagesPerSignature);
-  const signatures: PDFPage[][] = [];
-
-  for (let i = 0; i < totalSignatures; i++) {
-    const lastSignature =
-      i === totalSignatures - 1 && totalPages % pagesPerSignature !== 0
-        ? totalPages % pagesPerSignature
-        : false;
-
-    if (lastSignature) {
-      signatures.push(
-        pages.slice(
-          i * pagesPerSignature,
-          i * pagesPerSignature + lastSignature
-        )
-      );
-    } else {
-      signatures.push(
-        pages.slice(
-          i * pagesPerSignature,
-          i * pagesPerSignature + pagesPerSignature
-        )
-      );
-    }
-  }
-
-  const promiseArray = signatures.map((signature) => {
-    impositionSignatures(signature, pagesPerSignature);
-  });
-
-  const finalDoc = await PDFDocument.create();
-
-  // console.log(promiseArray);
-
-  Promise.all(promiseArray).then((finishedFile) => {
-    // console.log(finishedFile);
-
-    finishedFile.forEach((arr) => {
-      // console.log(arr);
-      // arr.forEach((page: PDFPage) => {
-      //   finalDoc.addPage(page);
-      // });
-    });
-  });
-
-  return await finalDoc;
-}
-
-async function impositionSignatures(
-  signature: Array<PDFPage>,
-  pagesPerSignature: number
-): Promise<Array<PDFPage | undefined>> {
+async function getImpositionArray(index: number): Promise<number[]> {
+  const arr: number[] = [];
   let toggle = false;
-  const newDoc: (PDFPage | undefined)[] = [];
+
   for (let i = 0; i < pagesPerSignature / 2; i++) {
     if (toggle) {
-      newDoc.push(signature.at(i));
-      newDoc.push(signature.at(-i - 1));
+      arr.push((index - 1) * pagesPerSignature + i);
+      arr.push(index * pagesPerSignature - i - 1);
     } else {
-      newDoc.push(signature.at(-i - 1));
-      newDoc.push(signature.at(i));
+      arr.push(index * pagesPerSignature - i - 1);
+      arr.push((index - 1) * pagesPerSignature + i);
     }
     toggle = !toggle;
   }
-  console.log(await newDoc);
-  return await newDoc;
+  // console.log(arr);
+  return await arr;
 }
 
+function impositionPages(pdfDoc: PDFDocument, arrayOfIndexes: number[]) {
+  // console.log(pdfDoc);
+  return PDFDocument.create();
+}
 // To run from the cmd:
 // deno run --allow-write --allow-read imposition.ts -i ./test/test-12.pdf -o test-12-output.pdf -p 3
 // or
 // deno run --allow-write --allow-read imposition.ts -i ./test/test-60.pdf -o test-60-output.pdf -p 3
+// or
+// deno run --allow-write --allow-read imposition.ts -i ./test/test-103.pdf -o test-103-output.pdf -p 3
